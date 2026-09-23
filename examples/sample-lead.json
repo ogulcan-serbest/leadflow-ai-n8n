@@ -1,0 +1,7 @@
+{
+  "name": "Alex Example",
+  "email": "alex@example.com",
+  "company": "Example Studio",
+  "message": "We receive around 80 support requests per day. We want to classify them, route urgent cases, and draft replies from our help articles. A human should approve every reply.",
+  "source": "website"
+}

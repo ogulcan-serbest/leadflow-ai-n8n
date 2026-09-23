@@ -1,0 +1,16 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+credentials*.json
+client_secret*.json
+service-account*.json
+oauth*.json
+*.pem
+*.key
+
+# Local files and runtime state
+.DS_Store
+.n8n/
+n8n_data/
+node_modules/

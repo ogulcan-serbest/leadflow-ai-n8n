@@ -1,0 +1,377 @@
+{
+  "name": "LeadFlow AI - Lead intake and qualification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b78c72d9-626e-4584-a514-ad3cbd1e4304",
+      "name": "Lead intake webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        -112
+      ],
+      "webhookId": "772f5c4b-3c89-4e49-9f9b-5bd868d6a365"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.body ?? $json;\nconst text = (value) => typeof value === 'string' ? value.trim() : '';\nconst lead = {\n  name: text(raw.name),\n  email: text(raw.email).toLowerCase(),\n  company: text(raw.company),\n  message: text(raw.message),\n  source: text(raw.source) || 'unknown'\n};\nconst errors = [];\nif (!lead.name) errors.push('name is required');\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(lead.email)) errors.push('a valid email is required');\nif (lead.message.length < 10) errors.push('message must contain at least 10 characters');\nif (lead.message.length > 5000) errors.push('message must be 5000 characters or fewer');\nreturn [{ json: { ...lead, isValid: errors.length === 0, validationErrors: errors } }];"
+      },
+      "id": "a2473179-7fac-4266-9dc4-b6e353d7767b",
+      "name": "Validate and normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a3214595-43e4-4ea0-ad0c-ac79bd2540dc",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8558ff72-2e91-4e2f-a953-bb17cdb64437",
+      "name": "Input valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -128,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'gpt-4.1-mini', response_format: { type: 'json_object' }, messages: [{ role: 'system', content: 'Qualify this inbound business lead. Return only a JSON object with keys: summary (string), category (one of support, sales, partnership, other), priority (low, normal, high), fitReason (string), replyDraft (string). Do not invent facts or promise capabilities. The reply is only a draft for a human to review; do not claim anything has been sent.' }, { role: 'user', content: JSON.stringify({ name: $('Validate and normalize').first().json.name, company: $('Validate and normalize').first().json.company, message: $('Validate and normalize').first().json.message, source: $('Validate and normalize').first().json.source }) }] } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "2fb69623-0c59-4e9b-ab45-496f465a1a33",
+      "name": "Qualify lead and draft reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        112,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Validate and normalize').first().json;\nconst raw = $input.first().json;\nconst content = raw.choices?.[0]?.message?.content;\nif (typeof content !== 'string') throw new Error('Model response did not contain message content');\nlet qualification;\ntry { qualification = JSON.parse(content); } catch { throw new Error('Model response was not valid JSON'); }\nconst allowedCategories = new Set(['support', 'sales', 'partnership', 'other']);\nconst allowedPriorities = new Set(['low', 'normal', 'high']);\nif (!allowedCategories.has(qualification.category)) qualification.category = 'other';\nif (!allowedPriorities.has(qualification.priority)) qualification.priority = 'normal';\nfor (const key of ['summary', 'fitReason', 'replyDraft']) {\n  if (typeof qualification[key] !== 'string') qualification[key] = '';\n}\nreturn [{ json: { lead: { name: lead.name, email: lead.email, company: lead.company, source: lead.source }, qualification, reviewRequired: true, autoSend: false } }];"
+      },
+      "id": "5aa2f75b-f4b0-4ec7-ba8c-420717418750",
+      "name": "Prepare human review payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Prepare human review payload').first().json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "4c004bed-4ac4-4b99-8227-da31639f00ed",
+      "name": "Return review payload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        816,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, errors: $json.validationErrors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "4ab9496d-2a95-4262-9f52-40c4f34293f7",
+      "name": "Return validation errors",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        112,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "LeadFlow Inbox",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/REPLACE_WITH_YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Tabellenblatt1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/REPLACE_WITH_YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.lead.name }}",
+            "Email": "={{ $json.lead.email }}",
+            "Company": "={{ $json.lead.company }}",
+            "Source": "={{ $json.lead.source }}",
+            "Summary": "={{ $json.qualification.summary }}",
+            "Category": "={{ $json.qualification.category }}",
+            "Priority": "={{ $json.qualification.priority }}",
+            "Fit Reason": "={{ $json.qualification.fitReason }}",
+            "Reply Draft": "={{ $json.qualification.replyDraft }}",
+            "Review Required": "={{ $json.reviewRequired }}",
+            "Auto Send": "={{ $json.autoSend }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fit Reason",
+              "displayName": "Fit Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reply Draft",
+              "displayName": "Reply Draft",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Review Required",
+              "displayName": "Review Required",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Auto Send",
+              "displayName": "Auto Send",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        576,
+        -208
+      ],
+      "id": "c9b75dde-d065-4554-b191-c2d9b4bd49ad",
+      "name": "Append row in sheet"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lead intake webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and normalize": {
+      "main": [
+        [
+          {
+            "node": "Input valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input valid?": {
+      "main": [
+        [
+          {
+            "node": "Qualify lead and draft reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return validation errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify lead and draft reply": {
+      "main": [
+        [
+          {
+            "node": "Prepare human review payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare human review payload": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Return review payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
